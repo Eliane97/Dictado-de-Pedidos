@@ -7,8 +7,6 @@ import com.eli.pedidos.Producto;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.regex.Matcher; // Necesario para trabajar con Pattern
-import java.util.regex.Pattern; // Necesario para trabajar con expresiones regulares
 
 public class PDFParser {
     public static List<Pedido> parsePedidos(File archivoPdf) throws Exception {
@@ -19,17 +17,16 @@ public class PDFParser {
         } else if (esTipoSinCliente(texto)) {
             return parseSinCliente(texto);
         } else {
-            // Si tenés otro tipo, podés agregar más parseos aquí.
             return new ArrayList<>();
         }
     }
 
     private static boolean esTipoConCliente(String texto) {
-        return texto.contains("PEDIDO"); // o cualquier otro criterio que uses
+        return texto.contains("PEDIDO:");
     }
 
     private static boolean esTipoSinCliente(String texto) {
-        return !texto.contains("PEDIDO"); // o el criterio inverso
+        return !texto.contains("PEDIDO:");
     }
 
     private static List<Pedido> parseConCliente(String texto) {
@@ -47,11 +44,11 @@ public class PDFParser {
                     pedidos.add(new Pedido(clienteActual, productosActuales));
                     productosActuales = new ArrayList<>();
                 }
-                clienteActual = linea.split("PEDIDO:")[0].trim(); // Asegurarse de que el split sea por "PEDIDO:"
+                clienteActual = linea.split("PEDIDO:")[0].trim();
                 continue;
             }
 
-            Producto producto = parseProducto(linea);
+            Producto producto = parseProductoConCliente(linea);
             if (producto != null) {
                 productosActuales.add(producto);
             }
@@ -72,45 +69,92 @@ public class PDFParser {
             linea = linea.trim();
             if (linea.isEmpty()) continue;
 
-            Producto producto = parseProducto(linea);
+            Producto producto = parseProductoSinCliente(linea);
             if (producto != null) {
                 productos.add(producto);
             }
         }
 
-        // Como no hay cliente, podés crear un Pedido con cliente vacío o null
-        Pedido pedidoSinCliente = new Pedido("", productos);
         List<Pedido> lista = new ArrayList<>();
-        lista.add(pedidoSinCliente);
+        lista.add(new Pedido("", productos));
         return lista;
     }
 
-    private static Producto parseProducto(String linea) {
-        // Patrón para extraer la cantidad y la descripción.
-        // La descripción se truncará antes de un número (1 a 3 dígitos) seguido de un punto.
-        // ^\\s*(\\d+)\\s+      : Captura la cantidad (grupo 1) al inicio de la línea.
-        // (.*?)                : Captura la descripción de forma no codiciosa (grupo 2).
-        // (?:\\s+\\d{1,3}\\..*)? : Grupo no capturado y opcional. Busca un patrón numérico
-        //                        (1 a 3 dígitos, seguido de punto y cualquier cosa después)
-        //                        y lo consume, haciendo que la descripción (.*?) se trunque antes.
-        Pattern productoPattern = Pattern.compile("^\\s*(\\d+)\\s+(.*?)(?:\\s+\\d{1,3}\\..*)?$");
+    private static Producto parseProductoConCliente(String linea) {
+        String[] partes = linea.trim().split("\\s+");
+        int cantidad = -1;
+        StringBuilder descripcion = new StringBuilder();
+        boolean inicioDescripcion = false;
 
-        Matcher matcher = productoPattern.matcher(linea);
+        for (int i = 0; i < partes.length; i++) {
+            String palabra = partes[i];
 
-        if (matcher.find()) {
             try {
-                int cantidad = Integer.parseInt(matcher.group(1));
-                String descripcion = matcher.group(2).trim();
+                int numero = Integer.parseInt(palabra);
 
-                // Asegurarse de que la descripción no esté vacía después de truncar
-                if (!descripcion.isEmpty()) {
-                    return new Producto(cantidad, descripcion);
+                // Si estamos al comienzo y hay al menos dos números seguidos, salteamos el primero (el código)
+                if (i == 0 && partes.length > i + 1 && partes[i + 1].matches("\\d+")) {
+                    continue; // saltamos el código
                 }
-            } catch (NumberFormatException e) {
-                // Si la cantidad no es un número válido, no es un producto.
-                return null;
+
+                // Si no tenemos cantidad todavía, este número es la cantidad
+                if (cantidad == -1) {
+                    cantidad = numero;
+                    continue;
+                }
+
+            } catch (NumberFormatException ignored) {}
+
+            // Cortar si parece un precio
+            if (palabra.matches("\\d{1,3}(\\.\\d{3})*,\\d{2}")) break;
+
+            // Comenzar a armar la descripción cuando haya texto
+            if (!inicioDescripcion && palabra.matches(".*[a-zA-ZáéíóúÁÉÍÓÚñÑ].*")) {
+                inicioDescripcion = true;
+            }
+
+            if (inicioDescripcion) {
+                descripcion.append(palabra).append(" ");
             }
         }
-        return null;
+
+        return (cantidad != -1 && descripcion.length() > 0)
+                ? new Producto(cantidad, descripcion.toString().trim())
+                : null;
+    }
+
+    private static Producto parseProductoSinCliente(String linea) {
+        String[] partes = linea.trim().split("\\s+");
+        int cantidad = -1;
+        StringBuilder descripcion = new StringBuilder();
+        boolean despuesDeCantidad = false;
+
+        for (int i = 0; i < partes.length; i++) {
+            String palabra = partes[i];
+
+            try {
+                int posibleCantidad = Integer.parseInt(palabra);
+                if (cantidad == -1) {
+                    cantidad = posibleCantidad;
+                    despuesDeCantidad = true;
+                    continue;
+                }
+
+                // Si ya encontré la cantidad, y este número parece un código, lo ignoro
+                if (despuesDeCantidad && palabra.matches("\\d+")) {
+                    continue;
+                }
+
+            } catch (NumberFormatException ignored) {}
+
+            // Cortar si parece un precio
+            if (palabra.matches("\\d{1,3}(\\.\\d{3})*,\\d{2}")) break;
+
+            descripcion.append(palabra).append(" ");
+        }
+
+        return (cantidad != -1 && descripcion.length() > 0)
+                ? new Producto(cantidad, descripcion.toString().trim())
+                : null;
     }
 }
