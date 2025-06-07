@@ -1,7 +1,6 @@
 package com.eli.pedidos;
 
-
-import com.eli.pedidos.utils.PedidoVoiceService;
+import com.eli.pedidos.utils.PDFParser;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -10,70 +9,35 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.File;
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-
-import com.eli.pedidos.utils.PDFParser;
-
-
+import java.util.Map; // Solo si decides usar Map para el error, si no, puedes quitarlo
 
 @RestController
 @CrossOrigin
 public class PedidoController {
+
     @PostMapping("/api/procesar-pdf")
-    public ResponseEntity<Map<String, Object>> procesarPDF(@RequestParam("file") MultipartFile file) {
+    public ResponseEntity<List<Pedido>> procesarPDF(@RequestParam("file") MultipartFile file) {
+        File tempFile = null;
         try {
-            File tempFile = File.createTempFile("pedido", ".pdf");
+            tempFile = File.createTempFile("pedido", ".pdf");
             file.transferTo(tempFile);
 
+            // PDFParser.parsePedidos ya te devuelve una List<Pedido> sin los resúmenes.
             List<Pedido> pedidos = PDFParser.parsePedidos(tempFile);
-            List<String> mensajes = new ArrayList<>();
 
+            // Spring Boot serializará directamente esta lista de objetos Pedido a JSON.
+            return ResponseEntity.ok(pedidos);
 
-            for (Pedido pedido : pedidos) {
-                mensajes.add("Cliente: " + pedido.getCliente());
-                for (Producto producto : pedido.getProductos()) {
-                    mensajes.add(producto.getCantidad() + " " + producto.getDescripcion());
-                }
-            }
-
-            Map<String, Object> response = new HashMap<>();
-            response.put("mensajes", mensajes);
-
-            return ResponseEntity.ok(response);
         } catch (Exception e) {
             e.printStackTrace();
-            return ResponseEntity.status(500).body(Map.of("error", "No se pudo procesar el archivo"));
+            // Si hay un error, puedes devolver un status 500 y un cuerpo nulo,
+            // o un JSON de error si defines una clase de error.
+            return ResponseEntity.status(500).body(null);
+        } finally {
+            if (tempFile != null && tempFile.exists()) {
+                tempFile.delete();
+            }
         }
     }
-
-    // Inyección de PedidoVoiceService
-    private final PedidoVoiceService pedidoVoiceService;
-
-    // ALMACENAMIENTO TEMPORAL EN MEMORIA:
-    // **IMPORTANTE:** En una aplicación real, esto sería una base de datos (SQL, NoSQL, etc.)
-    // o un sistema de caché como Redis, que persista los datos.
-    // Los datos aquí se perderán cada vez que la aplicación se reinicie.
-    private final ConcurrentHashMap<String, List<Pedido>> processedPdfData = new ConcurrentHashMap<>();
-
-    // Constructor para la inyección de dependencias
-    public PedidoController(PedidoVoiceService pedidoVoiceService) {
-        this.pedidoVoiceService = pedidoVoiceService;
-    }
-
-
-
-
-
-
-
-
-
-
-
-
-
 }
